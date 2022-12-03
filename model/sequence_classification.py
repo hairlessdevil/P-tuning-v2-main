@@ -339,15 +339,9 @@ class RobertaPrefixForSequenceClassification(RobertaPreTrainedModel):
         self.pre_seq_len = config.pre_seq_len
         self.n_layer = config.num_hidden_layers
         self.n_head = config.num_attention_heads
-        self.n_embd = config.hidden_size // config.num_attention_heads
-        #===============================================
-        #why?
-        #===============================================
+        self.n_embd = config.hidden_size // config.num_attention_heads #number of hidden size per attention heads
 
         self.prefix_tokens = torch.arange(self.pre_seq_len).long()
-        #===============================================
-        #not randomized?
-        #===============================================
         self.prefix_encoder = PrefixEncoder(config)
 
         bert_param = 0
@@ -395,6 +389,7 @@ class RobertaPrefixForSequenceClassification(RobertaPreTrainedModel):
         batch_size = input_ids.shape[0]
         past_key_values = self.get_prompt(batch_size=batch_size)
         prefix_attention_mask = torch.ones(batch_size, self.pre_seq_len).to(self.roberta.device)
+        print(past_key_values[0][0].shape)
         #attention_mask = torch.cat((prefix_attention_mask, attention_mask), dim=1)
         #===============================================
         #trial 1: concatenate prefix to the end of the input_ids

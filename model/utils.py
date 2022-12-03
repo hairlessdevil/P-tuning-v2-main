@@ -92,7 +92,7 @@ def get_model(model_args, task_type: TaskType, config: AutoConfig, fix_bert: boo
     if model_args.prefix:
         config.hidden_dropout_prob = model_args.hidden_dropout_prob
         config.pre_seq_len = model_args.pre_seq_len
-        config.prefix_projection = model_args.prefix_projection
+        config.prefix_projection = model_args.prefix_projection #=============>
         config.prefix_hidden_size = model_args.prefix_hidden_size
         
         model_class = PREFIX_MODELS[config.model_type][task_type] #
