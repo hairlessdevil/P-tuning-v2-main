@@ -1,5 +1,5 @@
 import torch
-
+import torch.nn
 
 class PrefixEncoder(torch.nn.Module):
     r'''
@@ -12,7 +12,7 @@ class PrefixEncoder(torch.nn.Module):
     def __init__(self, config):
         super().__init__()
         self.prefix_projection = config.prefix_projection
-        if self.prefix_projection:
+        if self.prefix_projection: #=============>w what is prefix projection?
             # Use a two-layer MLP to encode the prefix
             self.embedding = torch.nn.Embedding(config.pre_seq_len, config.hidden_size)
             self.trans = torch.nn.Sequential(

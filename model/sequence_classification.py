@@ -369,7 +369,7 @@ class RobertaPrefixForSequenceClassification(RobertaPreTrainedModel):
         )
         past_key_values = self.dropout(past_key_values)
         past_key_values = past_key_values.permute([2, 0, 3, 1, 4]).split(2)
-        return past_key_values
+        return past_key_values #==============> Tuple(len = n_layer) of tensors in shape (2, batch_size, n-head, pre_seq_len, n_embed)
 
     def forward(
         self,
@@ -407,7 +407,7 @@ class RobertaPrefixForSequenceClassification(RobertaPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
-            #past_key_values=past_key_values,
+            past_key_values=past_key_values,
         )
 
         pooled_output = outputs[1]

@@ -739,6 +739,9 @@ class DebertaEmbeddings(nn.Module):
 
         if position_ids is None:
             position_ids = self.position_ids[:, past_key_values_length : seq_length + past_key_values_length] #the part without prefix
+            #============================================
+            # Looks like small error, since DebertaEmbedding has no position_ids attribute
+            #============================================
 
         if token_type_ids is None:
             token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=self.position_ids.device)
@@ -770,7 +773,7 @@ class DebertaEmbeddings(nn.Module):
                 mask = mask.unsqueeze(2)
             mask = mask.to(embeddings.dtype)
 
-            embeddings = embeddings * mask
+            embeddings = embeddings * mask #element-wise multiplication
 
         embeddings = self.dropout(embeddings)
         return embeddings
@@ -927,7 +930,7 @@ class DebertaModel(DebertaPreTrainedModel):
         attention_mask=None,
         token_type_ids=None,
         position_ids=None,
-        inputs_embeds=None,
+        inputs_embeds=None, # The embedded version of inputs, shape = (batch_size, seq_len, embed_size)
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
@@ -953,15 +956,21 @@ class DebertaModel(DebertaPreTrainedModel):
         device = input_ids.device if input_ids is not None else inputs_embeds.device
         
         past_key_values_length = past_key_values[0][0].shape[2] if past_key_values is not None else 0
+        #==============> equal to pre_seq length
 
         embedding_mask = attention_mask[:, past_key_values_length:].contiguous()
+        # The resulted embedding_mask is the original attention_mask without prefix_attention_mask
+
         if attention_mask is None:
             # attention_mask = torch.ones(input_shape, device=device)
             attention_mask = torch.ones(((batch_size, seq_length + past_key_values_length)), device=device)
         if token_type_ids is None:
             token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
+        #============================================
+        # What is token_type_ids?
+        #============================================
 
-        embedding_output = self.embeddings(
+        embedding_output = self.embeddings( #==============> finished 
             input_ids=input_ids,
             token_type_ids=token_type_ids,
             position_ids=position_ids,
@@ -970,7 +979,7 @@ class DebertaModel(DebertaPreTrainedModel):
             past_key_values_length=past_key_values_length,
         )
 
-        encoder_outputs = self.encoder(
+        encoder_outputs = self.encoder( #==============> may need to look into more
             embedding_output,
             attention_mask,
             output_hidden_states=True,
