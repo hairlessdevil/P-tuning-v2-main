@@ -38,7 +38,7 @@ def get_trainer(args):
             logger.info(f"Sample {index} of the training set: {dataset.train_dataset[index]}.")
 
     if not dataset.multiple_choice:
-        config = AutoConfig.from_pretrained(
+        config = AutoConfig.from_pretrained( #=======>
             model_args.model_name_or_path,
             num_labels=dataset.num_labels,
             label2id=dataset.label2id,

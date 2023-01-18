@@ -396,7 +396,7 @@ class DebertaEncoder(nn.Module):
         past_key_values=None,
     ):
         attention_mask = self.get_attention_mask(attention_mask)
-        relative_pos = self.get_rel_pos(hidden_states, query_states, relative_pos)
+        relative_pos = self.get_rel_pos(hidden_states, query_states, relative_pos) #relative_pos is None
 
         all_hidden_states = () if output_hidden_states else None
         all_attentions = () if output_attentions else None

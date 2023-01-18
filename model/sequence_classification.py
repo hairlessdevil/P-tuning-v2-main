@@ -6,7 +6,8 @@ from torch import Tensor
 from torch.nn import CrossEntropyLoss, MSELoss, BCEWithLogitsLoss
 
 from transformers import BertModel, BertPreTrainedModel
-from transformers import RobertaModel, RobertaPreTrainedModel
+from transformers import RobertaPreTrainedModel
+from model.roberta import RobertaModel
 from transformers.modeling_outputs import SequenceClassifierOutput, BaseModelOutput, Seq2SeqLMOutput
 
 from model.prefix_encoder import PrefixEncoder
@@ -369,7 +370,7 @@ class RobertaPrefixForSequenceClassification(RobertaPreTrainedModel):
         )
         past_key_values = self.dropout(past_key_values)
         past_key_values = past_key_values.permute([2, 0, 3, 1, 4]).split(2)
-        return past_key_values #==============> Tuple(len = n_layer) of tensors in shape (2, batch_size, n-head, pre_seq_len, n_embed)
+        return past_key_values #==============> Tuple(len = n_layer) of tensors in shape (2, batch_size, n_shead, pre_seq_len, n_embed)
 
     def forward(
         self,
@@ -389,15 +390,15 @@ class RobertaPrefixForSequenceClassification(RobertaPreTrainedModel):
         batch_size = input_ids.shape[0]
         past_key_values = self.get_prompt(batch_size=batch_size)
         prefix_attention_mask = torch.ones(batch_size, self.pre_seq_len).to(self.roberta.device)
-        print(past_key_values[0][0].shape)
         #attention_mask = torch.cat((prefix_attention_mask, attention_mask), dim=1)
         #===============================================
         #trial 1: concatenate prefix to the end of the input_ids
+        print(past_key_values[0][0].shape)
         input_ids = torch.cat((input_ids, past_key_values), dim=1)
         attention_mask = torch.cat((attention_mask, prefix_attention_mask), dim=1)
         #===============================================
 
-        outputs = self.roberta(
+        outputs = self.roberta( #========> RobertaModel.forward()
             input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
