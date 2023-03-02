@@ -370,7 +370,29 @@ class RobertaPrefixForSequenceClassification(RobertaPreTrainedModel):
         )
         past_key_values = self.dropout(past_key_values)
         past_key_values = past_key_values.permute([2, 0, 3, 1, 4]).split(2)
-        return past_key_values #==============> Tuple(len = n_layer) of tensors in shape (2, batch_size, n_shead, pre_seq_len, n_embed)
+        return past_key_values #==============> Tuple(len = n_layer（24）) of tensors in shape (2, batch_size, n_head, pre_seq_len, n_embed)
+
+    def mask_split_cat(self, orig_mask, insertion, split_num = 4):
+        """
+            Split the insertion into several parts and evenly insert them into the orig_layer
+        """
+        assert self.pre_seq_len == insertion.shape[1], "Insertion shape doesn't match with configuration!"
+        layer_step = orig_mask.shape[1]//split_num
+        insert_step = self.pre_seq_len//split_num
+        cat_list = []
+        for i in range(split_num):
+            layer_idx = i*layer_step
+            insert_idx = i*insert_step
+            tmp_cat = torch.cat([orig_mask[:, layer_idx:layer_idx + layer_step], 
+                                 insertion[:, insert_idx:insert_idx + insert_step]],
+                                 dim = 1)
+            cat_list.append(tmp_cat)
+        result = torch.cat(cat_list, dim=1)
+        if self.pre_seq_len%split_num != 0:
+            result = torch.cat([result, insertion[:, insert_step*split_num:]], dim=1)
+        if orig_mask.shape[1]%split_num != 0:
+            result = torch.cat([result, orig_mask[:, layer_step*split_num:]], dim=1)
+        return result
 
     def forward(
         self,
@@ -391,11 +413,13 @@ class RobertaPrefixForSequenceClassification(RobertaPreTrainedModel):
         past_key_values = self.get_prompt(batch_size=batch_size)
         prefix_attention_mask = torch.ones(batch_size, self.pre_seq_len).to(self.roberta.device)
         #attention_mask = torch.cat((prefix_attention_mask, attention_mask), dim=1)
+        attention_mask = self.mask_split_cat(attention_mask, prefix_attention_mask, 4)
+        #print("===============================================\ninitial attention mask after cat:", attention_mask.shape)
+        #print("initial input_ids", input_ids.shape)
         #===============================================
         #trial 1: concatenate prefix to the end of the input_ids
-        print(past_key_values[0][0].shape)
-        input_ids = torch.cat((input_ids, past_key_values), dim=1)
-        attention_mask = torch.cat((attention_mask, prefix_attention_mask), dim=1)
+        #print(past_key_values[0][0].shape)
+        #attention_mask = torch.cat((attention_mask, prefix_attention_mask), dim=1)
         #===============================================
 
         outputs = self.roberta( #========> RobertaModel.forward()
@@ -410,8 +434,10 @@ class RobertaPrefixForSequenceClassification(RobertaPreTrainedModel):
             return_dict=return_dict,
             past_key_values=past_key_values,
         )
-
+    
         pooled_output = outputs[1]
+        #print(pooled_output.shape)
+        #assert False
         #===============================================
         #The 2nd output. what is that?
         #===============================================

@@ -100,7 +100,11 @@ class RobertaEmbeddings(nn.Module):
         )
 
     def forward(
-        self, input_ids=None, token_type_ids=None, position_ids=None, inputs_embeds=None, past_key_values_length=0
+        self, input_ids=None, 
+        token_type_ids=None, 
+        position_ids=None, 
+        inputs_embeds=None, 
+        past_key_values_length=0
     ):
         if position_ids is None:
             if input_ids is not None:
@@ -166,7 +170,7 @@ class RobertaSelfAttention(nn.Module):
                 f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
                 f"heads ({config.num_attention_heads})"
             )
-
+        self.pre_seq_len = config.pre_seq_len
         self.num_attention_heads = config.num_attention_heads
         self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
         self.all_head_size = self.num_attention_heads * self.attention_head_size
@@ -187,6 +191,28 @@ class RobertaSelfAttention(nn.Module):
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
         x = x.view(*new_x_shape)
         return x.permute(0, 2, 1, 3)
+    
+    def split_cat(self, orig_layer, insertion, split_num = 4):
+        """
+            Split the insertion into several parts and evenly insert them into the orig_layer
+        """
+        assert self.pre_seq_len == insertion.shape[2], "Insertion shape doesn't match with configuration!"
+        layer_step = orig_layer.shape[2]//split_num
+        insert_step = self.pre_seq_len//split_num
+        cat_list = []
+        for i in range(split_num):
+            layer_idx = i*layer_step
+            insert_idx = i*insert_step
+            tmp_cat = torch.cat([orig_layer[:, :, layer_idx:layer_idx + layer_step, :], 
+                                 insertion[:, :, insert_idx:insert_idx + insert_step, :]],
+                                 dim = 2)
+            cat_list.append(tmp_cat)
+        result = torch.cat(cat_list, dim=2)
+        if self.pre_seq_len%split_num != 0:
+            result = torch.cat([result, insertion[:, :, insert_step*split_num:, :]], dim=2)
+        if orig_layer.shape[2]%split_num != 0:
+            result = torch.cat([result, orig_layer[:, :, layer_step*split_num:, :]], dim=2)
+        return result
 
     def forward(
         self,
@@ -198,8 +224,9 @@ class RobertaSelfAttention(nn.Module):
         past_key_value=None,
         output_attentions=False,
     ):
+        #print("hidden state shape:", hidden_states.shape)
         mixed_query_layer = self.query(hidden_states)
-
+        #print("mixed query layer shape:", mixed_query_layer.shape)
         # If this is instantiated as a cross-attention module, the keys
         # and values come from an encoder; the attention mask needs to be
         # such that the encoder's padding tokens are not attended to.
@@ -215,16 +242,25 @@ class RobertaSelfAttention(nn.Module):
             value_layer = self.transpose_for_scores(self.value(encoder_hidden_states))
             attention_mask = encoder_attention_mask
         elif past_key_value is not None: 
+            #print(past_key_value.shape)
             # look at this one for RobertaPrefixforSequenceClassification
             key_layer = self.transpose_for_scores(self.key(hidden_states))
             value_layer = self.transpose_for_scores(self.value(hidden_states))
-            key_layer = torch.cat([past_key_value[0], key_layer], dim=2)
-            value_layer = torch.cat([past_key_value[1], value_layer], dim=2)
+            #print("key/value_layer shape before cat", key_layer.shape)
+            #print("past_key_value.shape", past_key_value.shape)
+
+
+            key_layer = self.split_cat(key_layer, past_key_value[0], 4)
+            value_layer = self.split_cat(value_layer, past_key_value[1], 4)
+            #key_layer = torch.cat([key_layer, past_key_value[0]], dim=2)
+            #value_layer = torch.cat([value_layer, past_key_value[1]], dim=2)
+            #print("key/value_layer shape after cat", key_layer.shape)
         else:
             key_layer = self.transpose_for_scores(self.key(hidden_states))
             value_layer = self.transpose_for_scores(self.value(hidden_states))
 
         query_layer = self.transpose_for_scores(mixed_query_layer)
+        #query_layer = torch.cat([past_key_value[2], query_layer], dim=2)
 
         if self.is_decoder:
             # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
@@ -238,7 +274,8 @@ class RobertaSelfAttention(nn.Module):
 
         # Take the dot product between "query" and "key" to get the raw attention scores.
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
-
+        #print("query_layer shape:", query_layer.shape)
+        #print("key_layer shape after transpose:", (key_layer.transpose(-1, -2)).shape)
         if self.position_embedding_type == "relative_key" or self.position_embedding_type == "relative_key_query":
             seq_length = hidden_states.size()[1]
             position_ids_l = torch.arange(seq_length, dtype=torch.long, device=hidden_states.device).view(-1, 1)
@@ -257,6 +294,8 @@ class RobertaSelfAttention(nn.Module):
 
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
         if attention_mask is not None:
+            #print("attention scores shape:", attention_scores.shape)
+            #print("extended attention mask shape:", attention_mask.shape, "\n===============================================")
             # Apply the attention mask is (precomputed for all layers in RobertaModel forward() function)
             attention_scores = attention_scores + attention_mask
 
@@ -271,11 +310,12 @@ class RobertaSelfAttention(nn.Module):
         if head_mask is not None:
             attention_probs = attention_probs * head_mask
 
+
         context_layer = torch.matmul(attention_probs, value_layer)
 
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
         new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
-        context_layer = context_layer.view(*new_context_layer_shape)
+        context_layer = context_layer.view(*new_context_layer_shape) #convert back to shape of (16, 128, 1024)
 
         outputs = (context_layer, attention_probs) if output_attentions else (context_layer,)
 
@@ -344,7 +384,7 @@ class RobertaAttention(nn.Module):
             past_key_value,
             output_attentions,
         )
-        attention_output = self.output(self_outputs[0], hidden_states)
+        attention_output = self.output(self_outputs[0], hidden_states) #self_outputs[0] is the returned hidden state from the RobertaSelfAttention
         outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
         return outputs
 
@@ -406,7 +446,7 @@ class RobertaLayer(nn.Module):
         output_attentions=False,
     ):
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
-        self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
+        self_attn_past_key_value = past_key_value[:3] if past_key_value is not None else None
         # In effect, self_attn_past_key_value is exactly the same as past_key_value
         self_attention_outputs = self.attention(
             hidden_states,
@@ -415,7 +455,7 @@ class RobertaLayer(nn.Module):
             output_attentions=output_attentions,
             past_key_value=self_attn_past_key_value,
         )
-        attention_output = self_attention_outputs[0]
+        attention_output = self_attention_outputs[0] # the hidden state output from self-attention
 
         # if decoder, the last output is tuple of self-attn cache
         if self.is_decoder:
@@ -453,7 +493,7 @@ class RobertaLayer(nn.Module):
             self.feed_forward_chunk, self.chunk_size_feed_forward, self.seq_len_dim, attention_output
         )
         outputs = (layer_output,) + outputs
-
+        
         # if decoder, return the attn key/values as the last output
         if self.is_decoder:
             outputs = outputs + (present_key_value,)
@@ -476,7 +516,7 @@ class RobertaEncoder(nn.Module):
 
     def forward(
         self,
-        hidden_states,
+        hidden_states, #embedding output from RobertaEmbeddings
         attention_mask=None,
         head_mask=None,
         encoder_hidden_states=None,
@@ -531,6 +571,7 @@ class RobertaEncoder(nn.Module):
                     past_key_value,
                     output_attentions,
                 )
+                
 
             hidden_states = layer_outputs[0]
             if use_cache:
@@ -663,7 +704,10 @@ ROBERTA_INPUTS_DOCSTRING = r"""
             - 1 corresponds to a `sentence B` token.
 
             `What are token type IDs? <../glossary.html#token-type-ids>`_
-        position_ids (:obj:`torch.LongTensor` of shape :obj:`({0})`, `optional`):
+        position_ids (:obj:`torch.LongTen
+        
+        
+        sor` of shape :obj:`({0})`, `optional`):
             Indices of positions of each input sequence tokens in the position embeddings. Selected in the range ``[0,
             config.max_position_embeddings - 1]``.
 
@@ -822,7 +866,11 @@ class RobertaModel(RobertaPreTrainedModel):
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
         extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask, input_shape, device)
-
+        #=====================================
+        #broadcastable to [batch_size, num_heads, seq_length, seq_length]
+        #convert 0 to -10000, 1 to 0
+        #=====================================
+        
         # If a 2D or 3D attention mask is provided for the cross-attention
         # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
         if self.config.is_decoder and encoder_hidden_states is not None:
@@ -848,6 +896,8 @@ class RobertaModel(RobertaPreTrainedModel):
             inputs_embeds=inputs_embeds,
             past_key_values_length=past_key_values_length,
         )
+        #print("embedding output shape:", embedding_output.shape)
+
         encoder_outputs = self.encoder( #=======> RobertaEncoder.forward()
             embedding_output, 
             attention_mask=extended_attention_mask,
